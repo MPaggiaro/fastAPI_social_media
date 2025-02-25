@@ -69,12 +69,15 @@ def get_posts():
 # method to create new posts
 @app.post("/posts", status_code= status.HTTP_201_CREATED) # we specify also the status
 def create_posts(post: Post):
-    # print(post) 
-    # print(post.dict()) 
-    post_dict = post.dict() # converts pydantic model to python dictionary
-    post_dict['id'] = randrange(0, 1000000)
-    my_posts.append(post_dict)
-    return {"data" : post_dict}
+    cursor.execute("""INSERT INTO posts (title, content, published) 
+                   VALUES (%s, %s, %s) 
+                   RETURNING *""",
+    (post.title, post.content, post.published))
+    new_post = cursor.fetchone()
+
+    # commit changes to the database leveraging connection:
+    conn.commit() # this saves changes to database.
+    return {"data" : new_post} 
 
 # function to retrieve specific post: important to place it at the bottom.
 # because path parameter can create conflicts when looking for variables.
@@ -82,30 +85,28 @@ def create_posts(post: Post):
 def get_post(id: int, response: Response): #  {id} is a path parameter
     # id: int provides validation. Checks that id is integer, and
     # converts it to integer.
-    post = find_post(id)
+    cursor.execute("""SELECT * from posts WHERE id = %s """, str(id))
+    # we need to re-convert the id to string, to pass it to cursor.execute.
+    post = cursor.fetchone()
     if not post: # if not found, return 404.
-        # response.status_code = 404 # we control the status code of the response
-        # not most elegant way to hard code 404. better to do so:
-        # response.status_code = status.HTTP_404_NOT_FOUND
-        # return{'message': f"post with id: {id} was not found!"}
-        # works but uncomfortable. Even better is to use HTTP exception
+        # we control the status code of the response
         raise HTTPException(status_code= status.HTTP_404_NOT_FOUND,
                             detail= f"post with id: {id} was not found!")
 
     return{"post_detail" : post}
 # a path parameter will always be returned as a string.
 
-# status code of 204 for deletion
+# delete a post: status code of 204 for deletion
 @app.delete("/posts/{id}",  status_code= status.HTTP_204_NO_CONTENT)
 def delete_post(id: int):
-    # deleting post
-    # first, find the index in the array that has required ID:
-    index = find_index_post(id)
-
-    if index == None:
+    
+    cursor.execute("""DELETE FROM posts WHERE id = %s
+                   returning * """, str(id))
+    deleted_post = cursor.fetchone()
+    conn.commit() # committing deletion
+    if deleted_post == None:
         raise HTTPException(status_code= status.HTTP_404_NOT_FOUND,
                             detail= f"post with id {id} does not exist!")
-    my_posts.pop(index)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -113,15 +114,16 @@ def delete_post(id: int):
 @app.put("/posts/{id}")
 def update_post(id: int, post: Post):
 
-    # first, find the index in the array that has required ID:
-    index = find_index_post(id)
-
-    if index == None:
+    # update SQL query
+    cursor.execute("""UPDATE posts SET title = %s, content = %s, published = %s 
+                   WHERE id = %s 
+                   RETURNING *""",
+                   (post.title, post.content, post.published, str(id)))
+    
+    updated_post = cursor.fetchone()
+    conn.commit()
+    if updated_post == None:
         raise HTTPException(status_code= status.HTTP_404_NOT_FOUND,
                             detail= f"post with id {id} does not exist!")
     
-    post_dict = post.dict() # convert the user-input JSON to Python dictionary
-    post_dict['id'] = id # set ID as requested
-    my_posts[index] = post_dict # overwrite the post at correct index
-
-    return{'data' : post_dict}
+    return{'data' : updated_post}
